@@ -4,7 +4,7 @@ A Streamlit-based AI resume screening and ranking app that compares uploaded res
 
 ## Live App
 
-Use the deployed version here: [https://resuminda.streamlit.app/](https://resuminda.streamlit.app/)
+Use the deployed version here: [https://resumin-ai.streamlit.app/](https://resuminda.streamlit.app/)
 
 ## Tech Stack
 
