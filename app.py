@@ -1,214 +1,144 @@
 # app.py
 import streamlit as st
 import google.generativeai as genai
-import re
-from agents import (
-    JD_AGENT_SYSTEM_INSTRUCTION, 
-    TECH_LEAD_SYSTEM_INSTRUCTION, 
-    HR_CULTURE_SYSTEM_INSTRUCTION, 
-    AUDITOR_AGENT_SYSTEM_INSTRUCTION,
-    CHAT_AGENT_SYSTEM_INSTRUCTION
-)
+import utils
+import agents
 
-def extract_text_from_uploaded_file(uploaded_file):
-    """Extracts text content from an uploaded binary PDF document."""
-    try:
-        import pypdf
-        reader = pypdf.PdfReader(uploaded_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
-    except Exception as e:
-        st.error(f"Error reading {uploaded_file.name}: {e}")
-        return ""
+# Page Config Configuration Layout
+st.set_page_config(page_title="AI Resume Screener Analyzer", page_icon="📄", layout="wide")
 
-def parse_score_from_output(text):
-    """Parses out the structural score integer from the Auditor's JSON tracking payload."""
-    try:
-        match = re.search(r'\{"final_score":\s*(\d+)\}', text)
-        if match:
-            return int(match.group(1))
-        pct_match = re.search(r'(\d+)%', text)
-        if pct_match:
-            return int(pct_match.group(1))
-    except Exception:
-        pass
-    return 0
-
-st.set_page_config(page_title="AI based Resume Screener and ranking system", layout="wide")
-
-st.title("🔄 AI based Resume Screener and ranking system")
-st.caption("Features a self-correcting graph topology where an Auditor can reject, critique, and iterate evaluations dynamically.")
-
-# Persistent data structures initialized into global memory space
-if "talent_pool" not in st.session_state:
-    st.session_state["talent_pool"] = []
+# Persistent Session State Storage Initialization Layer
+if "candidate_pool" not in st.session_state:
+    st.session_state.candidate_pool = []
 if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = []
+    st.session_state.chat_history = []
+if "target_profile" not in st.session_state:
+    st.session_state.target_profile = None
 
-# Sidebar Configuration Control Room
-st.sidebar.header("Setup & Inputs")
-gemini_api_key = st.sidebar.text_input("Enter your Gemini API Key", type="password")
+st.title("📄 AI Resume Screener & Ranking Board")
+st.write("Evaluate candidate fields against target corporate criteria utilizing automated multi-agent arbitration.")
 
-# Dual Options for entering the target benchmark Job Description
-jd_input = st.sidebar.text_area("Option A: Paste Job Description Here", height=150)
-jd_file = st.sidebar.file_uploader("Option B: Or Upload Job Description PDF", type=["pdf"])
-
-uploaded_files = st.sidebar.file_uploader("Upload Resumes (Select Multiple PDFs)", type=["pdf"], accept_multiple_files=True)
-
-if st.sidebar.button("Run Assessment"):
-    # Determine configuration payload context source dynamically
-    final_jd_text = ""
-    if jd_file is not None:
-        final_jd_text = extract_text_from_uploaded_file(jd_file)
-    elif jd_input.strip():
-        final_jd_text = jd_input
-
-    if not gemini_api_key or not final_jd_text or not uploaded_files:
-        st.error("Please ensure the API Key, Job Description (Text or PDF), and at least one Resume are provided.")
-    else:
-        try:
-            # Clean alignment spacing setup for the underlying model configurations
-            genai.configure(api_key=gemini_api_key)
-            
-            # --- STEP 1: Job Description Analyst ---
-            with st.status("Agent 1: Extracting Target Job Profile...", expanded=True) as status:
-                jd_model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite", system_instruction=JD_AGENT_SYSTEM_INSTRUCTION)
-                jd_agent_response = jd_model.generate_content(f"Analyze this job description:\n\n{final_jd_text}")
-                extracted_jd_criteria = jd_agent_response.text
-                status.update(label=" Job DNA Extracted!", state="complete")
-            
-            with st.expander("🔍 View Extracted Target Job Profile Structure"):
-                st.markdown(extracted_jd_criteria)
-
-            # Flush current cache maps to prepare memory slots for a fresh calculation cycle run
-            st.session_state["talent_pool"] = []
-            st.session_state["chat_history"] = []
-            
-            st.subheader("⏳ Evaluating Data...")
-            
-            # --- CORE CYCLIC LOOP MATRIX PER RESUME ---
-            for index, file in enumerate(uploaded_files):
-                resume_text = extract_text_from_uploaded_file(file)
-                if not resume_text.strip():
-                    continue
-                
-                # Internal execution loop graph tracking conditions
-                is_approved = False
-                loop_count = 0
-                max_loops = 3  # Protect infrastructure ceiling threshold limits
-                last_critique = "None. This is the initial valuation run."
-                
-                tech_evaluation = ""
-                hr_evaluation = ""
-                audited_output = ""
-                
-                with st.status(f"Evaluating {file.name}...", expanded=False) as status:
-                    
-                    while not is_approved and loop_count < max_loops:
-                        loop_count += 1
-                        status.update(label=f"🔄 Processing {file.name} - Loop Iteration #{loop_count}...")
-                        
-                        # Pipeline Invocation: Technical Specialist Persona Agent
-                        tech_model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite", system_instruction=TECH_LEAD_SYSTEM_INSTRUCTION)
-                        tech_prompt = f"Job Criteria:\n{extracted_jd_criteria}\n\nResume:\n{resume_text}\n\nPrior Auditor Feedback/Critique:\n{last_critique}\n\nPrevious Tech Log:\n{tech_evaluation}"
-                        tech_evaluation = tech_model.generate_content(tech_prompt).text
-                        
-                        # Pipeline Invocation: HR/Culture Persona Agent
-                        hr_model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite", system_instruction=HR_CULTURE_SYSTEM_INSTRUCTION)
-                        hr_prompt = f"Job Criteria:\n{extracted_jd_criteria}\n\nResume:\n{resume_text}\n\nPrior Auditor Feedback/Critique:\n{last_critique}\n\nPrevious HR Log:\n{hr_evaluation}"
-                        hr_evaluation = hr_model.generate_content(hr_prompt).text
-                        
-                        # Graph Layer Routing Check: Reconciling Auditor Agent
-                        auditor_model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite", system_instruction=AUDITOR_AGENT_SYSTEM_INSTRUCTION)
-                        audit_prompt = f"--- RAW RESUME ---\n{resume_text}\n\n--- CURRENT TECH LOG ---\n{tech_evaluation}\n\n--- CURRENT HR LOG ---\n{hr_evaluation}"
-                        audited_output = auditor_model.generate_content(audit_prompt).text
-                        
-                        # Inspect verification flags inside edge loop pathways
-                        if "STATUS: REJECTED" in audited_output:
-                            critique_match = re.search(r"CRITIQUE:(.*?)$", audited_output, re.DOTALL | re.IGNORECASE)
-                            last_critique = critique_match.group(1).strip() if critique_match else audited_output
-                            st.toast(f"⚠️ Audit Rejected {file.name} on loop {loop_count}. Self-correcting...", icon="🔄")
-                        else:
-                            is_approved = True
-                    
-                    final_score = parse_score_from_output(audited_output)
-                    
-                    # Clean out operational token headers before pushing structural strings to memory registers
-                    cleaned_report = audited_output.replace("STATUS: APPROVED", "").replace("FINAL REPORT:", "")
-                    cleaned_report = re.sub(r"2\.\s+METADATA:.*?(```json.*?```)?$", "", cleaned_report, flags=re.DOTALL | re.IGNORECASE)
-                    cleaned_report = re.sub(r"```json.*?```$", "", cleaned_report, flags=re.DOTALL).strip()
-                    
-                    # Append completed profile properties directly into persistent cache space
-                    st.session_state["talent_pool"].append({
-                        "filename": file.name,
-                        "score": final_score,
-                        "clean_report": cleaned_report,
-                        "tech_log": tech_evaluation,
-                        "hr_log": hr_evaluation,
-                        "raw_resume_text": resume_text,
-                        "loops_taken": loop_count
-                    })
-                    
-                    status.update(label=f"✅ {file.name} Finalized on iteration {loop_count} (Score: {final_score}%)", state="complete")
-                    
-        except Exception as e:
-            st.error(f"An infrastructure error occurred: {e}")
-
-# --- STEP 4: DISPLAY DASHBOARD & RENDERING ---
-if st.session_state["talent_pool"]:
-    pool = st.session_state["talent_pool"]
-    pool.sort(key=lambda x: x['score'], reverse=True)
+# --- SIDEBAR: AUTHORIZATION & SYSTEM INGESTION CONFIGURATION ---
+with st.sidebar:
+    st.header("🔑 Authentication")
+    api_key = st.text_input("Enter Gemini API Key:", type="password")
     
-    st.success("🎉 Evaluation Complete! Standings rendered below.")
-    st.header("🏆 Final Candidate Standings")
+    st.markdown("---")
+    st.header("📥 Data Ingestion")
     
-    # Render crisp clean score blocks without any trailing red lines/arrows underneath
-    cols = st.columns(min(len(pool), 4))
-    for idx, candidate in enumerate(pool[:4]):
-        with cols[idx]:
-            st.metric(
-                label=f"#{idx+1} {candidate['filename']}", 
-                value=f"{candidate['score']}%"
-            )
-            
-    st.write("---")
-    st.subheader("📄 Deep Analysis Candidate Records")
-    for idx, candidate in enumerate(pool):
-        with st.expander(f"Rank #{idx+1}: {candidate['filename']} — [Score: {candidate['score']}%] [Loops: {candidate['loops_taken']}]"):
-            tab_audited, tab_tech, tab_hr = st.tabs(["🛡️ Verified Report", "💻 Tech Lead Transcript", "👔 HR Director Transcript"])
-            with tab_audited:
-                st.markdown(candidate['clean_report'])
-            with tab_tech:
-                st.markdown(candidate['tech_log'])
-            with tab_hr:
-                st.markdown(candidate['hr_log'])
-                
-    # --- OPTION 5 FEATURE LAYER: INTERACTIVE CHAT POOL REPOSITORY ---
-    st.write("---")
-    st.header("💬 Interactive Query Assistant")
-    for chat in st.session_state["chat_history"]:
-        with st.chat_message(chat["role"]):
-            st.markdown(chat["content"])
+    # Ingest Job Requirements Schema
+    job_file = st.file_uploader("Upload Job Description (PDF) or Paste Below:", type=["pdf"])
+    job_text_area = st.text_area("Paste Job Requirements Details manually:")
+    
+    # Ingest Candidate Data Profiles Batch
+    resume_files = st.file_uploader("Upload Candidate Resumes (Multiple PDFs allowed):", type=["pdf"], accept_multiple_files=True)
 
-    if user_query := st.chat_input("Query your Candidates..."):
-        with st.chat_message("user"):
-            st.markdown(user_query)
-        st.session_state["chat_history"].append({"role": "user", "content": user_query})
-        
-        db_context_string = ""
-        for candidate in pool:
-            db_context_string += f"\nFILE: {candidate['filename']} | SCORE: {candidate['score']}%\nREPORT:\n{candidate['clean_report']}\n"
-            
-        with st.spinner("Analyzing..."):
-            try:
-                chat_agent_model = genai.GenerativeModel(model_name="gemini-3.1-flash-lite", system_instruction=CHAT_AGENT_SYSTEM_INSTRUCTION)
-                agent_response = chat_agent_model.generate_content(f"Database Context:\n{db_context_string}\n\nQuery: {user_query}").text
-                with st.chat_message("assistant"):
-                    st.markdown(agent_response)
-                st.session_state["chat_history"].append({"role": "assistant", "content": agent_response})
-            except Exception as e:
-                st.error(f"Chat error: {e}")
+# Main Dashboard Ingestion Activation Trigger
+if not api_key:
+    st.warning("⚠️ Access Blocked: Provide a valid Google Gemini API Key in the sidebar window to unlock execution models.")
 else:
-    st.info("Upload inputs and click 'Run Assessment' to activate your AI-powered resume screening and ranking system!")
+    # Set the Global configuration state token pointer globally
+    genai.configure(api_key=api_key)
+    
+    # Resolve job details textual contents pipeline state variations
+    job_description_content = ""
+    if job_file:
+        job_description_content = utils.extract_text_from_pdf(job_file)
+    elif job_text_area:
+        job_description_content = job_text_area
+
+    # Primary Workflow trigger logic engine block
+    if st.sidebar.button("🚀 Execute Multi-Agent Evaluation Loop", use_container_width=True):
+        if not job_description_content.strip():
+            st.error("❌ Process Halting: Missing target requirement attributes. Paste or upload a Job Description.")
+        elif not resume_files:
+            st.error("❌ Process Halting: Candidate queue vector array payload empty. Please upload resumes.")
+        else:
+            with st.spinner("🤖 System Node Alert: Profiling Job Matrix with specialized Core Model agent..."):
+                try:
+                    job_model = genai.GenerativeModel('gemini-3.1-flash-lite')
+                    response = job_model.generate_content([agents.JOB_AGENT_PROMPT, job_description_content])
+                    st.session_state.target_profile = response.text
+                except Exception as e:
+                    st.error(f"Error parsing job configurations parameters: {str(e)}")
+            
+            # Reset current candidate cache block state frame
+            st.session_state.candidate_pool = []
+            
+            # Process incoming candidate arrays iteratively downstream
+            progress_bar = st.progress(0)
+            for index, resume in enumerate(resume_files):
+                with st.spinner(f"🔄 Processing Core Agentic Loop for candidate record: {resume.name}..."):
+                    raw_resume_text = utils.extract_text_from_pdf(resume)
+                    
+                    # Call Agent loop payload logic execution framework
+                    evaluation_record = utils.run_agentic_screening_loop(
+                        resume_name=resume.name,
+                        resume_text=raw_resume_text,
+                        target_profile=st.session_state.target_profile
+                    )
+                    
+                    # Inject Lexical score matching calculations layer seamlessly
+                    lexical_score = utils.calculate_similarity(job_description_content, raw_resume_text)
+                    evaluation_record["lexical_similarity"] = lexical_score
+                    
+                    st.session_state.candidate_pool.append(evaluation_record)
+                
+                # Update visual metric increments indicators safely
+                progress_bar.progress((index + 1) / len(resume_files))
+            
+            # Sort array configurations descending based on internal agent score allocations 
+            st.session_state.candidate_pool = sorted(st.session_state.candidate_pool, key=lambda x: x["score"], reverse=True)
+            st.success("🏆 Comprehensive Talent Acquisition Run Completed successfully!")
+
+    # --- MAIN VIEW LAYOUT INTERFACE BUILDER ---
+    if st.session_state.candidate_pool:
+        st.write("## 🏆 Evaluation Ranking Matrix Dashboard")
+        
+        # Display Candidate breakdown summaries grid metrics maps
+        for rank, candidate in enumerate(st.session_state.candidate_pool, start=1):
+            with st.expander(f"🏅 Rank {rank}: {candidate['name']} — Consensus Score: {candidate['score']}/100 (Lexical Match: {candidate['lexical_similarity']}%)"):
+                tab1, tab2, tab3 = st.tabs(["💻 Technical Lead Analysis", "🤝 HR Assessment", "🛡️ Audit Reports Trail"])
+                with tab1:
+                    st.markdown(candidate["tech_analysis"])
+                with tab2:
+                    st.markdown(candidate["hr_analysis"])
+                with tab3:
+                    st.info(f"Auditor Node Validation Response State: {candidate['audit_status']}")
+        
+        st.markdown("---")
+        
+        # --- CHAT INTERFACE SECTION WITH AUTOMATED INTENT ROUTER ---
+        st.write("### 💬 System Assistant Communication Panel")
+        st.caption("Ask questions about candidate portfolios or general knowledge queries (e.g. 'Who is the prime minister of india').")
+        
+        # Render historical interaction thread data frames inside active viewport state context
+        for chat in st.session_state.chat_history:
+            with st.chat_message(chat["role"]):
+                st.markdown(chat["content"])
+        
+        # Ingest interactive stream context payloads via standard Chat Input UI frame
+        if user_prompt := st.chat_input("Enter your request here..."):
+            with st.chat_message("user"):
+                st.markdown(user_prompt)
+            st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+            
+            # Step 1: Fire Intent Check using Router Matrix
+            with st.spinner("Classifying intent topology..."):
+                detected_intent = utils.route_user_intent(user_prompt)
+            
+            # Step 2: Branch Execution Stack depending on classification output
+            if detected_intent == "CHITCHAT":
+                with st.spinner("Consulting general chitchat knowledge graph..."):
+                    agent_reply = utils.handle_chitchat(user_prompt)
+            else:
+                with st.spinner("Querying candidate contextual RAG vectors map..."):
+                    agent_reply = utils.query_candidate_rag(user_prompt, st.session_state.candidate_pool)
+            
+            # Step 3: Stream generated response down to viewport buffer layers
+            with st.chat_message("assistant"):
+                st.markdown(agent_reply)
+            st.session_state.chat_history.append({"role": "assistant", "content": agent_reply})
+            
+    else:
+        st.info("💡 Application Idle State: Load your parameters data profile structures in the side configuration panels and hit execute to populate tracking models.")
